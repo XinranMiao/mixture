@@ -1,0 +1,113 @@
+
+```{r}
+library(tidyverse)
+library(cmdstanr)
+source("R/simulate.R")
+source("R/reshape.R")
+set.seed(1)
+```
+
+```{r}
+N <- 200
+K <- 9
+X <- matrix(1, nrow = N, ncol = 2)
+X[sample(1:N, size = N / 2), 2] <- 0
+beta <- matrix(rnorm(2 * K, 0, 3), nrow = K, ncol = 2)
+beta[1:4, 2] <- 0
+y <- lnm_simulator(X, beta)
+
+
+```
+
+## Mixture
+```{r}
+model <- cmdstan_model("stan/lnm_mixture.stan")
+data_list <- list(N = N,  K = K, trt = X[, 2], y = y)
+fit <- model$variational(data_list)
+```
+
+```{r}
+fit$draws("p1") %>%
+  colMeans()
+```
+```{r}
+beta[, 2]
+```
+```{r}
+fit$draws("effect") %>%
+  apply(2, quantile, c(0.05, 0.95)
+        )
+```
+
+```{r}
+fit$draws("beta1_intercept") %>%
+ colMeans()
+```
+```{r}
+fit$draws("beta0_intercept") %>%
+ colMeans()
+```
+```{r}
+colMeans(fit$draws("beta0_intercept")) *(1 - colMeans(fit$draws("p1"))) + colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_intercept"))
+```
+```{r}
+beta[,1]
+```
+
+
+## LNM
+```{r}
+model_lnm <- cmdstan_model("stan/lnm.stan")
+data_list <- list(N = N,  K = K, trt = X[, 2], y = y)
+fit_lnm <- model_lnm$variational(data_list)
+```
+
+
+```{r}
+fit_lnm$draws("effect") %>%
+  apply(2, quantile, c(0.05, 0.95)
+        )
+```
+
+```{r}
+fit_lnm$draws("beta1_intercept") %>%
+  colMeans()
+```
+```{r}
+plot(beta[,1])
+lines(fit_lnm$draws("beta1_intercept") %>% colMeans(), col = "red")
+lines(colMeans(fit$draws("beta0_intercept")) *(1 - colMeans(fit$draws("p1"))) + colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_intercept")), col = "blue")
+```
+
+```{r}
+plot(beta[,2])
+lines(fit_lnm$draws("beta1_t") %>% colMeans(), col = "red")
+lines( colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_t")), col = "blue")
+```
+
+```{r}
+rel_abund <- fit_lnm$draws("p_sim_arr")[1, ] %>%
+  post_rel_abund() %>%
+  mutate(type = "LNM") %>%
+  rbind(count2prob(y) %>%
+          mutate(type = "truth")) %>%
+  rbind(
+    fit$draws("p_sim_arr")[1, ] %>%
+  post_rel_abund() %>%
+  mutate(type = "LNM-mixture")
+  )
+
+rel_abund %>%
+  filter(sample <= 50) %>%
+  ggplot() +
+  geom_bar(aes(x = sample, y = value, fill = Taxon),
+           position = position_stack(), stat = "identity") +
+ facet_wrap(  type ~ ., scales = "free", ncol = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = "Sample", y = "Relative abundance")  +
+  scale_x_continuous(expand = c(0, 0))
+```
+
+
