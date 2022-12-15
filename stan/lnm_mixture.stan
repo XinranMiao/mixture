@@ -99,6 +99,7 @@ generated quantities {
     }
   }
 
+  // counterfactual
   array[2, N, K + 1] real<lower=0> p_c; // conterfactual in probability scale
   array[2, N, K + 1] int<lower=0> y_c;
   vector[K + 1] effect;
