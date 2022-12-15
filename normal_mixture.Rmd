@@ -14,7 +14,7 @@ X <- matrix(1, nrow = N, ncol = 2)
 X[sample(1:N, size = N / 2), 2] <- 0
 beta <- matrix(rnorm(2 * K, 0, 3), nrow = K, ncol = 2)
 beta[1:4, 2] <- 0
-beta <- beta[order(beta[, 2]), ]
+# beta <- beta[order(beta[, 2]), ]
 std <- 1
 ```
 
@@ -155,22 +155,28 @@ lines( colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_t")), col =
 #   mutate(name = name_vec[as.integer(name)])
 ```
 ```{r}
+ordered_taxa <- arrange(true_para, beta1_t) %>% select(Taxon) %>% unlist
 rbind(coef_quantile("beta1_t", fit_mix),
       coef_prod_quantile("beta1_t", "p1", fit_mix)) %>%
   mutate(type = "mixture") %>%
   rbind(coef_quantile("beta1_t", fit_normal) %>%
           mutate(type = "normal")) %>%
   rbind(coef_quantile("beta1_t", fit_multi) %>%
-          mutate(type = "multi_normal")) %>%
+          mutate(type = "multi")) %>%
+  mutate(name = str_replace(name, "beta1_t", "beta1")) %>%
+  mutate(Taxon = factor(Taxon,
+                        levels = ordered_taxa
+                        )) %>%
   ggplot(aes(x = Taxon, y = estimate, 
              ymin = lwr, ymax = upr,
              color = interaction(type, name))) +
-  geom_point(position=position_dodge(width = 1)) +
+  geom_point(position = position_dodge(width = 1)) +
   geom_errorbar(position=position_dodge(width = 1)) +
   geom_point(inherit.aes = FALSE, data = true_para,
              aes(x = Taxon, y = beta1_t)) +
   theme_bw() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
 ```
 
 
@@ -188,6 +194,9 @@ z_df <- fit_normal$draws("z_sim")[1,] %>%
   rename(sample = "row",
            Taxon = "col") %>%
   mutate(Taxon = paste0("V", Taxon)) %>%
+  mutate(Taxon = factor(Taxon,
+                        levels = ordered_taxa
+                        )) %>%
   select(-name) %>%
   rbind(z_truth) %>%
   inner_join(info)
@@ -199,6 +208,7 @@ z_df %>%
   ggplot +
   geom_histogram(aes(x = value, fill = trt), position="identity", alpha = 0.6, bins = 50) +
   facet_grid(Taxon ~ type) +
-  theme_bw()
+  theme_bw() +
+  theme(legend.position = "bottom")
 ```
 
