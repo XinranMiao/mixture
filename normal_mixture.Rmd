@@ -1,0 +1,204 @@
+
+```{r}
+library(tidyverse)
+library(cmdstanr)
+source("R/simulate.R")
+source("R/reshape.R")
+set.seed(2)
+```
+
+```{r}
+N <- 200
+K <- 14
+X <- matrix(1, nrow = N, ncol = 2)
+X[sample(1:N, size = N / 2), 2] <- 0
+beta <- matrix(rnorm(2 * K, 0, 3), nrow = K, ncol = 2)
+beta[1:4, 2] <- 0
+beta <- beta[order(beta[, 2]), ]
+std <- 1
+```
+
+```{r}
+# calculate z for further visualization
+z <- matrix(nrow = N, ncol = K)
+for (i in 1:N) {
+    z[i, ] <- rnorm(K, X[i, ] %*% t(beta), std)
+}
+z_truth <- z %>%
+  as.data.frame() %>%
+  rowid_to_column("sample") %>%
+  pivot_longer(!sample, names_to = "Taxon", values_to = "value") %>%
+  mutate(type = "truth")
+info <- data.frame(sample = 1:N, 
+                   trt = X[, 2])
+true_para <- data.frame(
+  Taxon = str_c("V", 1:K),
+  beta1_t = beta[, 2],
+  beta1_intercept = beta[, 1],
+  type = "truth"
+)
+```
+
+
+## Mixture
+```{r}
+
+model <- cmdstan_model("stan/normal_mixture.stan")
+data_list <- list(N = N,  K = K, trt = X[, 2], z = as.matrix(z))
+start <- Sys.time()
+fit_mix <- model$variational(data_list)
+print(Sys.time() - start)
+```
+
+
+
+```{r}
+fit_mix$draws("p1") %>%
+  colMeans()
+```
+```{r}
+colMeans(fit_mix$draws("beta1_t"))
+```
+
+```{r}
+colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_t"))
+```
+
+
+```{r}
+beta[, 2]
+```
+
+
+```{r}
+fit_mix$draws("beta1_intercept") %>%
+ colMeans()
+```
+```{r}
+fit_mix$draws("beta0_intercept") %>%
+ colMeans()
+```
+```{r}
+colMeans(fit_mix$draws("beta0_intercept")) *(1 - colMeans(fit_mix$draws("p1"))) + colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_intercept"))
+```
+```{r}
+beta[,1]
+```
+
+```{r}
+fit_mix$draws("sigmas1") %>%
+  colMeans()
+
+fit_mix$draws("sigmas0") %>%
+  colMeans()
+```
+
+
+## normal
+```{r}
+model_normal <- cmdstan_model("stan/normal.stan")
+data_list <- list(N = N,  K = K, trt = X[, 2], z = z)
+start <- Sys.time()
+fit_normal <- model_normal$variational(data_list)
+print(Sys.time() - start)
+```
+
+
+
+
+```{r}
+fit_normal$draws("beta1_intercept") %>%
+  colMeans()
+```
+
+```{r}
+fit_normal$draws("beta1_t") %>%
+  colMeans()
+```
+```{r}
+fit_normal$draws("sigmas1") %>%
+  colMeans()
+```
+## multinormal
+```{r}
+model_multi <- cmdstan_model("stan/multi_normal.stan")
+data_list <- list(N = N,  K = K, trt = X[, 2], z = z)
+start <- Sys.time()
+fit_multi <- model_multi$variational(data_list)
+print(Sys.time() - start)
+```
+
+# Compare truth, mixture, normal
+## Regression coefficients
+```{r}
+plot(beta[,1])
+lines(fit_normal$draws("beta1_intercept") %>% colMeans(), col = "red")
+lines(fit_multi$draws("beta1_intercept") %>% colMeans(), col = "green")
+lines(colMeans(fit_mix$draws("beta0_intercept")) *(1 - colMeans(fit_mix$draws("p1"))) + colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_intercept")), col = "blue")
+```
+
+```{r}
+plot(beta[,2])
+lines(fit_normal$draws("beta1_t") %>% colMeans(), col = "red")
+lines(fit_multi$draws("beta1_t") %>% colMeans(), col = "green")
+lines( colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_t")), col = "blue")
+```
+
+```{r}
+# name_vec <- c("beta1_t", "beta0_intercept", "beta1_intercept", "sigmas1", "sigmas0")
+# 
+# mix_coef <- map_dfr(name_vec, ~coef_quantile(., fit_mix), .id = "name") %>%
+#   mutate(name = name_vec[as.integer(name)])
+# 
+# name_vec <- c("beta1_t", "beta1_intercept", "sigmas1")
+# lnm_coef <- map_dfr(name_vec, ~coef_quantile(., fit_normal), .id = "name") %>%
+#   mutate(name = name_vec[as.integer(name)])
+```
+```{r}
+rbind(coef_quantile("beta1_t", fit_mix),
+      coef_prod_quantile("beta1_t", "p1", fit_mix)) %>%
+  mutate(type = "mixture") %>%
+  rbind(coef_quantile("beta1_t", fit_normal) %>%
+          mutate(type = "normal")) %>%
+  rbind(coef_quantile("beta1_t", fit_multi) %>%
+          mutate(type = "multi_normal")) %>%
+  ggplot(aes(x = Taxon, y = estimate, 
+             ymin = lwr, ymax = upr,
+             color = interaction(type, name))) +
+  geom_point(position=position_dodge(width = 1)) +
+  geom_errorbar(position=position_dodge(width = 1)) +
+  geom_point(inherit.aes = FALSE, data = true_para,
+             aes(x = Taxon, y = beta1_t)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+
+## `z`
+```{r}
+z_df <- fit_normal$draws("z_sim")[1,] %>%
+  reshape_onedraw() %>%
+  mutate(type = "normal") %>%
+  rbind(fit_mix$draws("z_sim")[1, ] %>%
+          reshape_onedraw() %>%
+          mutate(type = "mixture")) %>%
+  rbind(fit_multi$draws("z_sim")[1, ] %>%
+          reshape_onedraw() %>%
+          mutate(type = "multi-normal")) %>%
+  rename(sample = "row",
+           Taxon = "col") %>%
+  mutate(Taxon = paste0("V", Taxon)) %>%
+  select(-name) %>%
+  rbind(z_truth) %>%
+  inner_join(info)
+```
+
+```{r}
+z_df %>%
+  mutate(trt = factor(trt)) %>%
+  ggplot +
+  geom_histogram(aes(x = value, fill = trt), position="identity", alpha = 0.6, bins = 50) +
+  facet_grid(Taxon ~ type) +
+  theme_bw()
+```
+
