@@ -14,44 +14,85 @@ X <- matrix(1, nrow = N, ncol = 2)
 X[sample(1:N, size = N / 2), 2] <- 0
 beta <- matrix(rnorm(2 * K, 0, 3), nrow = K, ncol = 2)
 beta[1:4, 2] <- 0
-y <- lnm_simulator(X, beta)
-
-
+beta <- beta[order(beta[, 2]), ]
+std <- 1
+y <- lnm_simulator(X, beta, sigma = std)
 ```
+
+```{r}
+# calculate mu for further visualization
+mu <- matrix(nrow = N, ncol = K)
+for (i in 1:N) {
+    mu[i, ] <- rnorm(K, X[i, ] %*% t(beta), std)
+}
+mu_truth <- mu %>%
+  as.data.frame() %>%
+  rowid_to_column("sample") %>%
+  pivot_longer(!sample, names_to = "Taxon", values_to = "value") %>%
+  mutate(type = "truth")
+info <- data.frame(sample = 1:N, 
+                   trt = X[, 2])
+true_para <- data.frame(
+  Taxon = str_c("V", 1:K),
+  beta1_t = beta[, 2],
+  beta1_intercept = beta[, 1],
+  type = "truth"
+)
+```
+
 
 ## Mixture
 ```{r}
 model <- cmdstan_model("stan/lnm_mixture.stan")
 data_list <- list(N = N,  K = K, trt = X[, 2], y = y)
-fit <- model$variational(data_list)
+fit_mix <- model$variational(data_list)
+```
+
+
+
+```{r}
+fit_mix$draws("p1") %>%
+  colMeans()
+```
+```{r}
+colMeans(fit_mix$draws("beta1_t"))
 ```
 
 ```{r}
-fit$draws("p1") %>%
-  colMeans()
+colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_t"))
 ```
+
+
 ```{r}
 beta[, 2]
 ```
 ```{r}
-fit$draws("effect") %>%
+fit_mix$draws("effect") %>%
   apply(2, quantile, c(0.05, 0.95)
         )
 ```
 
 ```{r}
-fit$draws("beta1_intercept") %>%
+fit_mix$draws("beta1_intercept") %>%
  colMeans()
 ```
 ```{r}
-fit$draws("beta0_intercept") %>%
+fit_mix$draws("beta0_intercept") %>%
  colMeans()
 ```
 ```{r}
-colMeans(fit$draws("beta0_intercept")) *(1 - colMeans(fit$draws("p1"))) + colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_intercept"))
+colMeans(fit_mix$draws("beta0_intercept")) *(1 - colMeans(fit_mix$draws("p1"))) + colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_intercept"))
 ```
 ```{r}
 beta[,1]
+```
+
+```{r}
+fit_mix$draws("sigmas1") %>%
+  colMeans()
+
+fit_mix$draws("sigmas0") %>%
+  colMeans()
 ```
 
 
@@ -73,18 +114,83 @@ fit_lnm$draws("effect") %>%
 fit_lnm$draws("beta1_intercept") %>%
   colMeans()
 ```
+
+```{r}
+fit_lnm$draws("beta1_t") %>%
+  colMeans()
+```
+```{r}
+fit_lnm$draws("sigmas1") %>%
+  colMeans()
+```
+
+
+# Compare truth, mixture, LNM
+## Regression coefficients
 ```{r}
 plot(beta[,1])
 lines(fit_lnm$draws("beta1_intercept") %>% colMeans(), col = "red")
-lines(colMeans(fit$draws("beta0_intercept")) *(1 - colMeans(fit$draws("p1"))) + colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_intercept")), col = "blue")
+lines(colMeans(fit_mix$draws("beta0_intercept")) *(1 - colMeans(fit_mix$draws("p1"))) + colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_intercept")), col = "blue")
 ```
 
 ```{r}
 plot(beta[,2])
 lines(fit_lnm$draws("beta1_t") %>% colMeans(), col = "red")
-lines( colMeans(fit$draws("p1")) * colMeans(fit$draws("beta1_t")), col = "blue")
+lines( colMeans(fit_mix$draws("p1")) * colMeans(fit_mix$draws("beta1_t")), col = "blue")
 ```
 
+```{r}
+rbind(coef_quantile("beta1_t", fit_mix),
+      coef_prod_quantile("beta1_t", "p1", fit_mix)) %>%
+  mutate(type = "mixture") %>%
+  rbind(coef_quantile("beta1_t", fit_lnm) %>%
+          mutate(type = "LNM")) %>%
+  ggplot(aes(x = Taxon, y = estimate, 
+             ymin = lwr, ymax = upr,
+             color = interaction(type, name))) +
+  geom_point(position=position_dodge(width = 1)) +
+  geom_errorbar(position=position_dodge(width = 1)) +
+  geom_point(inherit.aes = FALSE, data = true_para,
+             aes(x = Taxon, y = beta1_t)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+
+## `mu`
+```{r}
+mu_df <- fit_mix$draws("mu_sim")[1,] %>%
+  reshape_onedraw() %>%
+  mutate(type = "mixture") %>%
+  rbind(fit_lnm$draws("mu_sim")[1, ] %>%
+          reshape_onedraw() %>%
+          mutate(type = "LNM")) %>%
+  rename(sample = "row",
+           Taxon = "col") %>%
+  mutate(Taxon = paste0("V", Taxon)) %>%
+  select(-name) %>%
+  rbind(mu_truth) %>%
+  inner_join(info)
+```
+```{r}
+mu_df %>%
+  mutate(trt = factor(trt)) %>%
+  ggplot +
+  geom_histogram(aes(x = value, fill = trt), position="identity", alpha = 0.6, bins = 50) +
+  facet_grid(Taxon ~ type) +
+  theme_bw()
+
+mu_df %>%
+  group_by(type, trt, Taxon) %>%
+  summarise(m = mean(value), variance = var(value)) %>%
+  pivot_longer(c(m, variance), names_to = "statistic", values_to = "stat_value") %>%
+  ggplot +
+  geom_point(aes(x = Taxon, y = stat_value, color = type)) +
+  facet_grid(statistic ~ trt) +
+  theme_bw()
+```
+
+## Relative abundance
 ```{r}
 rel_abund <- fit_lnm$draws("p_sim_arr")[1, ] %>%
   post_rel_abund() %>%
@@ -92,11 +198,23 @@ rel_abund <- fit_lnm$draws("p_sim_arr")[1, ] %>%
   rbind(count2prob(y) %>%
           mutate(type = "truth")) %>%
   rbind(
-    fit$draws("p_sim_arr")[1, ] %>%
+    fit_mix$draws("p_sim_arr")[1, ] %>%
   post_rel_abund() %>%
   mutate(type = "LNM-mixture")
   )
+```
+```{r}
+rel_abund %>%
+  ggplot() +
+  geom_boxplot(aes(x = Taxon, y = value, color = type)) +
+  scale_y_sqrt() +
+  theme_bw()+
+  theme(legend.position = "bottom")
+```
 
+
+## Compositional GOF
+```{r}
 rel_abund %>%
   filter(sample <= 50) %>%
   ggplot() +
