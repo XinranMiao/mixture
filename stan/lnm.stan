@@ -56,7 +56,7 @@ model {
   vector[K] e_mu;
   for (i in 1:N) {
     for (k in 1:K) {
-      mu[i][k] ~ normal(beta1_intercept[k] + beta1_t[k] * trt[k], sigmas1[k]);
+      mu[i][k] ~ normal(beta1_intercept[k] + beta1_t[k] * trt[i], sigmas1[k]);
 
     }
     e_mu = to_vector(exp(mu[i]));

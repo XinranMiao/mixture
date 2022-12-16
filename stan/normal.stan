@@ -25,7 +25,7 @@ model {
   
   for (i in 1:N) {
     for (k in 1:K) {
-      z[i][k] ~ normal(beta1_intercept[k] + beta1_t[k] * trt[k], sigmas1[k]);
+      z[i][k] ~ normal(beta1_intercept[k] + beta1_t[k] * trt[i], sigmas1[k]);
     }
   }
 }
