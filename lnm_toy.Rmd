@@ -25,7 +25,7 @@ y <- lnm_simulator(X, beta, sigma = std)
 
 ```{r}
 model <- cmdstan_model("stan/lnm.stan")
-B <- 100
+B <- 300
 z_list <- list()
 for (b in 1:B) {
   X_permute <- X[sample(1:N, N, replace = TRUE), ]
