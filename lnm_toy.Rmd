@@ -1,0 +1,61 @@
+
+```{r}
+library(tidyverse)
+library(cmdstanr)
+source("R/simulate.R")
+source("R/reshape.R")
+set.seed(1)
+```
+
+
+```{r}
+N <- 200
+K <- 2
+X <- matrix(1, nrow = N, ncol = 2)
+X[sample(1:N, size = N / 2), 2] <- 0
+beta <- matrix(rnorm(2 * K, 0, 3), nrow = K, ncol = 2)
+beta[1:2, 2] <- 0
+beta <- beta[order(beta[, 2]), ]
+std <- 1
+y <- lnm_simulator(X, beta, sigma = std)
+```
+
+
+
+
+```{r}
+model <- cmdstan_model("stan/lnm.stan")
+B <- 100
+z_list <- list()
+for (b in 1:B) {
+  X_permute <- X[sample(1:N, N, replace = TRUE), ]
+  data_list <- list(N = N,  K = K, trt = X_permute[, 2], y = y)
+  fit <- model$variational(data_list)
+  z_list[[b]] <- p_z("p_sim_arr", fit, X_permute[, 2])
+}
+```
+
+```{r}
+z_df <- bind_rows(z_list, .id = "b") %>%
+  pivot_longer(!b, names_to = "Taxon", values_to = "value")
+```
+
+```{r}
+z_df %>%
+  ggplot() +
+  geom_histogram(aes(x = value, y = after_stat(density)), 
+                 position = "identity", bins = 25,
+                 fill = "#E6A654") +
+  stat_function(fun = dnorm, args = list(mean = mean(z_df$value), sd = sd(z_df$value)),
+                linewidth = .7,
+                color = "#988FBF") +
+  facet_wrap(~Taxon) +
+  scale_x_continuous(breaks = seq(-4.5, 4.5, by = 1.5)) +
+  theme_bw() +
+  labs(x = "z-scores in relative abundance scale")
+ggsave("~/Downloads/toy_example.png", width = 9, height = 3)
+```
+
+
+
+
